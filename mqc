@@ -1,0 +1,85 @@
+#!/bin/bash
+# Micro Quant Chat - Command Helper
+# Makes it easy to run common commands
+
+PYTHON=".venv/bin/python"
+
+print_usage() {
+    cat << EOF
+Micro Quant Chat - GPT for Financial Time Series
+
+Usage: $0 <command> [options]
+
+Commands:
+  examples           Run usage examples
+  train             Train the model
+  eval              Evaluate trained model
+  generate          Generate price predictions
+  analyze           Analyze token data
+  help              Show this help message
+
+Training Options:
+  --epochs N        Number of training epochs (default: 10)
+  --batch N         Batch size (default: 32)
+  --lr RATE         Learning rate (default: 5e-4)
+
+Generation Options:
+  --seed "TOKENS"   Seed tokens (default: "80 81 83 89 66")
+  --num N           Number of tokens to generate (default: 50)
+  --temp T          Temperature (default: 0.8)
+  --samples N       Number of samples (default: 3)
+
+Examples:
+  $0 examples
+  $0 train --epochs 20 --batch 64
+  $0 generate --seed "80 81 83" --num 100
+  $0 eval
+  $0 analyze --patterns
+
+EOF
+}
+
+case "$1" in
+    examples)
+        echo "Running usage examples..."
+        $PYTHON examples.py
+        ;;
+    
+    train)
+        shift
+        echo "Training model..."
+        $PYTHON train.py "$@"
+        ;;
+    
+    eval|evaluate)
+        shift
+        echo "Evaluating model..."
+        $PYTHON evaluate.py "$@"
+        ;;
+    
+    generate|gen)
+        shift
+        echo "Generating predictions..."
+        $PYTHON generate.py "$@"
+        ;;
+    
+    analyze|analysis)
+        shift
+        echo "Analyzing tokens..."
+        $PYTHON src/token_analysis.py "$@"
+        ;;
+    
+    help|--help|-h)
+        print_usage
+        ;;
+    
+    *)
+        if [ -z "$1" ]; then
+            print_usage
+        else
+            echo "Unknown command: $1"
+            echo "Run '$0 help' for usage information"
+            exit 1
+        fi
+        ;;
+esac

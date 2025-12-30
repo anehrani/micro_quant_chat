@@ -1,7 +1,11 @@
 [project]
 name = "micro-quant-chat"
 version = "0.1.0"
-description = "Add your description here"
+description = "GPT-like model for financial time series prediction on tokenized price data"
 readme = "README.md"
-requires-python = ">=3.12"
-dependencies = []
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "numpy>=1.21.0",
+    "pandas>=1.3.0",
+]
