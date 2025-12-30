@@ -2,6 +2,17 @@
 # Micro Quant Chat - Command Helper
 # Makes it easy to run common commands
 
+# Get the directory where this script lives
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the project root (parent of scripts/)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Export PYTHONPATH to include project root
+export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+
+# Change to project root directory
+cd "$PROJECT_ROOT"
+
 PYTHON=".venv/bin/python"
 
 print_usage() {
@@ -42,25 +53,25 @@ EOF
 case "$1" in
     examples)
         echo "Running usage examples..."
-        $PYTHON examples.py
+        $PYTHON src/examples.py
         ;;
     
     train)
         shift
         echo "Training model..."
-        $PYTHON train.py "$@"
+        $PYTHON src/train.py "$@"
         ;;
     
     eval|evaluate)
         shift
         echo "Evaluating model..."
-        $PYTHON evaluate.py "$@"
+        $PYTHON src/evaluate.py "$@"
         ;;
     
     generate|gen)
         shift
         echo "Generating predictions..."
-        $PYTHON generate.py "$@"
+        $PYTHON src/generate.py "$@"
         ;;
     
     analyze|analysis)

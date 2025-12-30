@@ -6,10 +6,7 @@ import torch
 import os
 import sys
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(__file__))
-
-from tokenizer import VQVAETwitterizerOC
+from src.tokenizer import VQVAETwitterizerOC
 
 
 def load_model(model_path):

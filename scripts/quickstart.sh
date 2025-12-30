@@ -3,6 +3,17 @@
 
 set -e
 
+# Get the directory where this script lives
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the project root (parent of scripts/)
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Export PYTHONPATH to include project root
+export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
+
+# Change to project root directory
+cd "$PROJECT_ROOT"
+
 echo "======================================"
 echo "Micro Quant Chat - Quick Start"
 echo "======================================"
@@ -34,7 +45,7 @@ echo "Step 3: Starting training..."
 echo "This will train an 8-layer GPT model on your tokenized price data"
 echo "Training will take 2-10 minutes depending on your hardware"
 echo ""
-python train.py \
+python src/train.py \
     --num_epochs 10 \
     --batch_size 32 \
     --learning_rate 5e-4
@@ -44,12 +55,12 @@ echo "✓ Training complete!"
 echo ""
 
 echo "Step 4: Evaluating model..."
-python evaluate.py
+python src/evaluate.py
 
 echo ""
 echo "Step 5: Generating predictions..."
 echo "Generating 50 tokens starting from seed tokens..."
-python generate.py \
+python src/generate.py \
     --seed_tokens "80 81 83 89 66" \
     --num_generate 50 \
     --temperature 0.8 \
@@ -63,6 +74,6 @@ echo ""
 echo "Next steps:"
 echo "  1. Check checkpoints/best_model.pt for saved model"
 echo "  2. Review the generated token sequences"
-echo "  3. Run python generate.py with different prompts"
-echo "  4. Modify hyperparameters in train.py for better results"
+echo "  3. Run python src/generate.py with different prompts"
+echo "  4. Modify hyperparameters in src/train.py for better results"
 echo ""

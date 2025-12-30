@@ -8,32 +8,32 @@ Using the convenient `mqc` command:
 
 ```bash
 # Run examples to verify everything works
-./mqc examples
+./scripts/mqc examples
 
 # Train the model
-./mqc train
+./scripts/mqc train
 
 # Evaluate performance
-./mqc eval
+./scripts/mqc eval
 
 # Generate predictions
-./mqc generate
+./scripts/mqc generate
 
 # View all commands
-./mqc help
+./scripts/mqc help
 ```
 
 Or use individual scripts with the run helper:
 ```bash
-./run.sh examples.py
-./run.sh train.py
-./run.sh evaluate.py
-./run.sh generate.py --seed_tokens "80 81 83 89 66"
+./scripts/run.sh src/examples.py
+./scripts/run.sh src/train.py
+./scripts/run.sh src/evaluate.py
+./scripts/run.sh src/generate.py --seed_tokens "80 81 83 89 66"
 ```
 
 Or use the automated quickstart:
 ```bash
-./quickstart.sh
+./scripts/quickstart.sh
 ```
 
 ## Project Structure
@@ -44,18 +44,22 @@ micro_quant_chat/
 │   ├── gpt_model.py           # GPT transformer implementation
 │   ├── tokenizer.py           # Price tokenization (VQ-VAE)
 │   ├── token_analysis.py      # Analysis tools
+│   ├── train.py               # Training script
+│   ├── generate.py            # Generation script
+│   ├── evaluate.py            # Evaluation script
+│   ├── examples.py            # Usage examples
 │   └── decode_tokens.py       # Token decoding
 ├── data/
 │   ├── all_tokens.txt         # Tokenized price series (3050 tokens)
 │   ├── AAPL_*.csv             # Raw OHLC data (10 assets)
 │   └── ...
 ├── checkpoints/               # Saved models
-├── train.py                   # Training script
-├── generate.py                # Generation script
-├── evaluate.py                # Evaluation script
-├── examples.py                # Usage examples
-├── run.sh                     # Helper script (uses .venv Python)
-└── quickstart.sh              # Automated setup and training
+├── models/                    # Tokenizer models
+├── scripts/
+│   ├── mqc                    # Main command helper
+│   ├── run.sh                 # Helper script (uses .venv Python)
+│   └── quickstart.sh          # Automated setup and training
+└── data_scripts/              # Data processing utilities
 ```
 
 ## What This Model Does
@@ -85,10 +89,10 @@ Based on modern GPT design (nanochat-inspired):
 
 ```bash
 # Basic training (10 epochs)
-./run.sh train.py
+./scripts/mqc train
 
 # Custom configuration
-./run.sh train.py --num_epochs 20 --batch_size 64 --learning_rate 1e-3
+./scripts/mqc train --num_epochs 20 --batch_size 64 --learning_rate 1e-3
 ```
 
 The training script:
@@ -101,23 +105,23 @@ The training script:
 
 ```bash
 # Generate from seed tokens
-./run.sh generate.py --seed_tokens "80 81 83 89 66" --num_generate 50
+./scripts/mqc generate --seed_tokens "80 81 83 89 66" --num_generate 50
 
 # Multiple samples with temperature
-./run.sh generate.py --temperature 0.8 --top_k 50 --num_samples 5
+./scripts/mqc generate --temperature 0.8 --top_k 50 --num_samples 5
 
 # Greedy decoding (temperature=0)
-./run.sh generate.py --temperature 0 --num_generate 100
+./scripts/mqc generate --temperature 0 --num_generate 100
 ```
 
 ### Evaluation
 
 ```bash
 # Compute metrics on test set
-./run.sh evaluate.py
+./scripts/mqc eval
 
 # Analyze token patterns
-./run.sh src/token_analysis.py --patterns --outliers
+./scripts/mqc analyze --patterns --outliers
 ```
 
 Metrics computed:
@@ -149,7 +153,7 @@ Metrics computed:
 
 ```bash
 # See all usage examples
-./run.sh examples.py
+./scripts/mqc examples
 ```
 
 This demonstrates:
@@ -184,7 +188,7 @@ source .venv/bin/activate
 pip install torch numpy pandas
 ```
 
-All scripts use `./run.sh` which automatically uses the venv Python.
+All scripts use `./scripts/mqc` or `./scripts/run.sh` which automatically uses the venv Python.
 
 ## Technical Details
 
@@ -244,13 +248,15 @@ To improve the model:
 
 ## Files
 
-- `train.py` - Training script with data loading and optimization
-- `generate.py` - Generate token sequences from trained model
-- `evaluate.py` - Compute metrics on test set
-- `examples.py` - Usage demonstrations
+- `src/train.py` - Training script with data loading and optimization
+- `src/generate.py` - Generate token sequences from trained model
+- `src/evaluate.py` - Compute metrics on test set
+- `src/examples.py` - Usage demonstrations
 - `src/gpt_model.py` - GPT architecture implementation
+- `src/tokenizer.py` - Price tokenization using VQ-VAE
 - `src/token_analysis.py` - Token statistics and patterns
-- `run.sh` - Helper to run Python from venv
+- `scripts/mqc` - Main command helper script
+- `scripts/run.sh` - Helper to run Python from venv
 - `MODEL_README.md` - Detailed architecture documentation
 
 ## References
