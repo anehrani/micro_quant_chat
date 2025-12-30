@@ -222,11 +222,19 @@ def train(
 
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Train GPT model")
+    parser.add_argument("--num_epochs", type=int, default=10, help="Number of epochs")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
+    parser.add_argument("--learning_rate", type=float, default=5e-4, help="Learning rate")
+    args = parser.parse_args()
+    
     # Configuration
     config = GPTConfig(
         sequence_len=256,
         vocab_size=128,
-        n_layer=2,
+        n_layer=6,
         n_head=8,
         n_kv_head=8,
         n_embd=512,
@@ -236,9 +244,9 @@ if __name__ == "__main__":
     model = train(
         config=config,
         data_file="data/all_tokens.txt",
-        num_epochs=10,
-        batch_size=32,
-        learning_rate=5e-4,
+        num_epochs=args.num_epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
         save_dir="checkpoints",
         device="auto",
     )

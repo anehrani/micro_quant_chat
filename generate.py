@@ -16,7 +16,7 @@ def load_checkpoint(checkpoint_path: str, device: str = "auto") -> tuple:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
 
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     config = checkpoint["config"]
     model = GPT(config)

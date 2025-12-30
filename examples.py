@@ -46,7 +46,7 @@ def example_2_create_model():
     config = GPTConfig(
         sequence_len=256,
         vocab_size=128,
-        n_layer=2,
+        n_layer=6,
         n_head=8,
         n_kv_head=8,
         n_embd=512,
