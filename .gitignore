@@ -27,3 +27,6 @@ TestResults.xml
 data/
 *.csv
 *.db
+
+# checkpoints
+*.pt
