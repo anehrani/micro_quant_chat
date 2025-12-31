@@ -359,7 +359,7 @@ if __name__ == "__main__":
 
     # Initialize tokenizer
     tokenizer = VQVAETwitterizerOC(
-        patch_size=16,    # 16 candles -> 1 token (larger patches for more variation)
+        patch_size=2,    # 16 candles -> 1 token (larger patches for more variation)
         emb_dim=32,       # Smaller embedding dim
         num_codes=128,    # Smaller codebook
         hidden=64,        # Smaller hidden dim
