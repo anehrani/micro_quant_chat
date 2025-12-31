@@ -59,19 +59,19 @@ case "$1" in
     train)
         shift
         echo "Training model..."
-        $PYTHON src/train.py "$@"
+        $PYTHON scripts/base_train.py "$@"
         ;;
     
     eval|evaluate)
         shift
         echo "Evaluating model..."
-        $PYTHON src/evaluate.py "$@"
+        $PYTHON scripts/base_eval.py "$@"
         ;;
     
     generate|gen)
         shift
         echo "Generating predictions..."
-        $PYTHON src/generate.py "$@"
+        $PYTHON scripts/base_sample.py "$@"
         ;;
     
     analyze|analysis)

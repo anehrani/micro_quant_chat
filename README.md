@@ -38,8 +38,17 @@ Or use the automated quickstart:
 
 ## Project Structure
 
+Detailed documentation of the nanochat-style refactor: see `docs/NANOCHAT_STYLE_REFACTOR.md`.
+
 ```
 micro_quant_chat/
+├── microchat/
+│   ├── gpt.py                 # Nanochat-style GPT implementation
+│   ├── data.py                # Token stream dataset + loaders
+│   ├── train.py               # Train loop + CLI
+│   ├── eval.py                # Eval loop + CLI
+│   ├── sample.py              # Sampling/generation + CLI
+│   └── ckpt.py                # Checkpoint save/load (dict config)
 ├── src/
 │   ├── gpt_model.py           # GPT transformer implementation
 │   ├── tokenizer.py           # Price tokenization (VQ-VAE)
@@ -57,6 +66,9 @@ micro_quant_chat/
 ├── models/                    # Tokenizer models
 ├── scripts/
 │   ├── mqc                    # Main command helper
+│   ├── base_train.py           # Nanochat-style entrypoint
+│   ├── base_eval.py            # Nanochat-style entrypoint
+│   ├── base_sample.py          # Nanochat-style entrypoint
 │   ├── run.sh                 # Helper script (uses .venv Python)
 │   └── quickstart.sh          # Automated setup and training
 └── data_scripts/              # Data processing utilities

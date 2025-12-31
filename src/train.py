@@ -5,6 +5,7 @@ Training script for GPT model on tokenized price series data.
 import os
 import time
 import math
+from dataclasses import asdict
 from pathlib import Path
 from typing import Tuple
 
@@ -237,7 +238,7 @@ def train(
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "config": config,
+                "config": asdict(config),
                 "train_loss": train_loss,
                 "val_loss": val_loss,
             }

@@ -26,6 +26,8 @@ def load_checkpoint(checkpoint_path: str, device: str = "auto"):
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     
     config = checkpoint["config"]
+    if isinstance(config, dict):
+        config = GPTConfig(**config)
     model = GPT(config)
     model.load_state_dict(checkpoint["model_state_dict"])
     model = model.to(device)
