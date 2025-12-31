@@ -60,7 +60,13 @@ def load_checkpoint(
 
     config = coerce_config(ckpt["config"])
     model = GPT(config)
-    model.load_state_dict(ckpt["model_state_dict"])
+
+    state = ckpt["model_state_dict"]
+    # Backward-compatibility: older checkpoints used keys like "transformer.wte.weight".
+    if any(k.startswith("transformer.") for k in state.keys()):
+        state = {k.replace("transformer.", "", 1): v for k, v in state.items()}
+
+    model.load_state_dict(state)
     model = model.to(dev)
     model.eval()
 

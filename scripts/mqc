@@ -23,7 +23,10 @@ Usage: $0 <command> [options]
 
 Commands:
   examples           Run usage examples
-  train             Train the model
+    train             Train the model (Stage 1 pretrain)
+    stage1            Stage 1 pretrain (alias of train)
+    stage2            Stage 2 supervised fine-tune (BTC)
+    stage3            Stage 3 RL fine-tune (BTC, REINFORCE)
   eval              Evaluate trained model
   generate          Generate price predictions
   analyze           Analyze token data
@@ -60,6 +63,24 @@ case "$1" in
         shift
         echo "Training model..."
         $PYTHON scripts/base_train.py "$@"
+        ;;
+
+    stage1|pretrain)
+        shift
+        echo "Stage 1 (pretrain)..."
+        $PYTHON scripts/stage1_pretrain.py "$@"
+        ;;
+
+    stage2|sft)
+        shift
+        echo "Stage 2 (SFT BTC)..."
+        $PYTHON scripts/stage2_sft.py "$@"
+        ;;
+
+    stage3|rl)
+        shift
+        echo "Stage 3 (RL BTC)..."
+        $PYTHON scripts/stage3_rl.py "$@"
         ;;
     
     eval|evaluate)

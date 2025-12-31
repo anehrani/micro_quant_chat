@@ -40,6 +40,10 @@ Or use the automated quickstart:
 
 Detailed documentation of the nanochat-style refactor: see `docs/NANOCHAT_STYLE_REFACTOR.md`.
 
+Optional Stage-3 REINFORCE fine-tuning on BTC: see `docs/RL_FINETUNING_BTC.md`.
+
+Three-stage training overview (Stage 1/2/3): see `docs/THREE_STAGE_TRAINING.md`.
+
 ```
 micro_quant_chat/
 ├── microchat/

@@ -30,3 +30,7 @@ data/
 
 # checkpoints
 *.pt
+
+# python
+__pycache__/
+*.py[cod]
