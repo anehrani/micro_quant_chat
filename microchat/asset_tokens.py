@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Union
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -16,6 +18,27 @@ from src.tokenizer import (
     extract_ohlc_features,
 )
 
+logger = logging.getLogger(__name__)
+
+# Module exports
+__all__ = [
+    "TokenizeResult",
+    "TokenizerType",
+    "load_tokenizer",
+    "asset_tokens_from_csv",
+    "btc_tokens_from_csv",
+]
+
+# Default hyperparameters
+DEFAULT_BETA = 0.25
+DEFAULT_EMA_DECAY_LEGACY = 0.95
+DEFAULT_EMA_DECAY_OHLC = 0.99
+DEFAULT_NUM_LAYERS = 2
+DEFAULT_HIDDEN_DIM = 64
+DEFAULT_EMB_DIM = 32
+DEFAULT_NUM_CODES = 512
+DEFAULT_INPUT_DIM = 5
+
 
 @dataclass(frozen=True)
 class TokenizeResult:
@@ -24,7 +47,7 @@ class TokenizeResult:
 
 
 # Type alias for both tokenizer types
-TokenizerType = Union[VQVAETwitterizerOC, OHLCCandleTokenizer]
+TokenizerType = VQVAETwitterizerOC | OHLCCandleTokenizer
 
 
 def _read_repo_csv_with_two_header_rows(csv_path: str | Path) -> pd.DataFrame:
@@ -45,10 +68,12 @@ def _read_repo_csv_with_two_header_rows(csv_path: str | Path) -> pd.DataFrame:
     return df
 
 
-def _compute_global_log_return_stats(data_dir: str | Path = "data") -> dict[str, float] | None:
+@lru_cache(maxsize=1)
+def _compute_global_log_return_stats(data_dir: str = "data") -> dict[str, float] | None:
     """Compute mean/std of log-returns across all CSVs as a fallback normalization.
 
     This mirrors the best-effort fallback used in src/predict.py.
+    Results are cached to avoid re-reading CSV files on every call.
     """
     p = Path(data_dir)
     if not p.exists():
@@ -65,7 +90,8 @@ def _compute_global_log_return_stats(data_dir: str | Path = "data") -> dict[str,
             r = consecutive_log_returns(df, c="Close")
             if r.size:
                 all_r.append(r.astype(np.float64))
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to process %s: %s", f, e)
             continue
 
     if not all_r:
@@ -95,14 +121,14 @@ def load_tokenizer(
         if config.get("type") == "ohlc_candle":
             # New OHLC Candle Tokenizer
             tok = OHLCCandleTokenizer(
-                input_dim=config.get("input_dim", 5),
-                hidden_dim=config.get("hidden_dim", 64),
-                emb_dim=config.get("emb_dim", 32),
-                num_codes=config.get("num_codes", 512),
-                num_layers=2,
-                use_context=True,
-                beta=0.25,
-                ema_decay=0.99,
+                input_dim=config.get("input_dim", DEFAULT_INPUT_DIM),
+                hidden_dim=config.get("hidden_dim", DEFAULT_HIDDEN_DIM),
+                emb_dim=config.get("emb_dim", DEFAULT_EMB_DIM),
+                num_codes=config.get("num_codes", DEFAULT_NUM_CODES),
+                num_layers=config.get("num_layers", DEFAULT_NUM_LAYERS),
+                use_context=config.get("use_context", True),
+                beta=config.get("beta", DEFAULT_BETA),
+                ema_decay=config.get("ema_decay", DEFAULT_EMA_DECAY_OHLC),
             )
             tok.load_state_dict(state_dict)
             
@@ -136,8 +162,8 @@ def load_tokenizer(
         emb_dim=emb_dim,
         num_codes=num_codes,
         hidden=hidden,
-        beta=0.25,
-        ema_decay=0.95,
+        beta=DEFAULT_BETA,
+        ema_decay=DEFAULT_EMA_DECAY_LEGACY,
     )
 
     tok.load_state_dict(sd)
@@ -152,12 +178,24 @@ def asset_tokens_from_csv(
     device: str = "cpu",
     normalize: bool = True,
     stats_source: Literal["global"] = "global",
+    precomputed_stats: dict[str, float] | None = None,
 ) -> TokenizeResult:
     """Convert an asset CSV to tokens.
 
     Supports both:
     - Legacy VQVAETwitterizerOC: uses log returns (1D)
     - New OHLCCandleTokenizer: uses OHLC features (5D)
+
+    Args:
+        csv_path: Path to the OHLC CSV file.
+        tokenizer: Loaded tokenizer model.
+        device: Device for computation ('cpu' or 'cuda').
+        normalize: Whether to normalize log returns (legacy tokenizer only).
+        stats_source: Source for normalization stats ('global').
+        precomputed_stats: Pre-computed mean/std dict to avoid recomputation.
+
+    Returns:
+        TokenizeResult with tokens and log returns.
     """
     df = _read_repo_csv_with_two_header_rows(csv_path)
     
@@ -180,8 +218,8 @@ def asset_tokens_from_csv(
         log_r = consecutive_log_returns(df, c="Close")
 
         if normalize:
-            stats = None
-            if stats_source == "global":
+            stats = precomputed_stats
+            if stats is None and stats_source == "global":
                 stats = _compute_global_log_return_stats("data")
             if stats is not None and "mean" in stats and "std" in stats:
                 log_r = (log_r - float(stats["mean"])) / float(stats["std"])
@@ -201,6 +239,7 @@ def btc_tokens_from_csv(
     device: str = "cpu",
     normalize: bool = True,
     stats_source: Literal["global"] = "global",
+    precomputed_stats: dict[str, float] | None = None,
 ) -> TokenizeResult:
     """Backward-compatible alias for older BTC-focused callers."""
     return asset_tokens_from_csv(
@@ -209,4 +248,5 @@ def btc_tokens_from_csv(
         device=device,
         normalize=normalize,
         stats_source=stats_source,
+        precomputed_stats=precomputed_stats,
     )

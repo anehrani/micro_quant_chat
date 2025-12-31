@@ -36,13 +36,196 @@ Or use the automated quickstart:
 ./scripts/quickstart.sh
 ```
 
+## 🎯 Four-Stage Training Pipeline
+
+Micro Quant Chat uses a **4-stage training pipeline** inspired by modern LLM training practices. Each stage builds on the previous one to progressively refine the model.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         TRAINING PIPELINE OVERVIEW                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐          │
+│   │ STAGE 1  │ ──▶ │ STAGE 2  │ ──▶ │ STAGE 3  │ ──▶ │ STAGE 4  │          │
+│   │ Pretrain │     │ Midtrain │     │   SFT    │     │    RL    │          │
+│   └──────────┘     └──────────┘     └──────────┘     └──────────┘          │
+│        │                │                │                │                 │
+│        ▼                ▼                ▼                ▼                 │
+│   All Assets       Single Asset    Multi-Day        Reward-Based           │
+│   Next-Token       Fine-Tuning     Prediction       Optimization           │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Stage 1: Pretrain — Learn General Market Patterns
+
+> **Goal**: Train the model to predict the next token across *all* assets.
+
+| Aspect | Details |
+|--------|---------|
+| **Input** | Combined token stream from all assets (`data/all_tokens.txt`) |
+| **Task** | Next-token prediction with cross-entropy loss |
+| **Learning** | General market patterns, volatility regimes, trend structures |
+| **Output** | `checkpoints/best_model.pt` |
+
+```bash
+./scripts/mqc stage1 --epochs 10 --batch 32 --lr 5e-4
+```
+
+**What the model learns:**
+- Common price movement patterns across different assets
+- Market microstructure (mean reversion, momentum, volatility clustering)
+- Token distribution and transition probabilities
+
+---
+
+### Stage 2: Midtrain — Specialize on a Single Asset
+
+> **Goal**: Fine-tune the pretrained model on a specific asset (e.g., BTC).
+
+| Aspect | Details |
+|--------|---------|
+| **Input** | Single asset CSV (e.g., `BTC-USD_*.csv`) |
+| **Task** | Teacher-forcing next-token prediction |
+| **Learning** | Asset-specific patterns, unique volatility profile |
+| **Output** | `checkpoints/midtrain_btc.pt` |
+
+```bash
+./scripts/mqc stage2 \
+  --in checkpoints/best_model.pt \
+  --out checkpoints/midtrain_btc.pt \
+  --csv data/BTC-USD_2014-09-17_2025-12-31_1d.csv \
+  --epochs 3 --lr 1e-5
+```
+
+**Why this matters:**
+- BTC has different dynamics than stocks (24/7 trading, higher volatility)
+- Specialization helps the model capture asset-specific patterns
+- Lower learning rate prevents catastrophic forgetting of Stage 1 knowledge
+
+---
+
+### Stage 3: SFT — Multi-Day Prediction Training
+
+> **Goal**: Train the model to predict *sequences* of future tokens, not just the next one.
+
+| Aspect | Details |
+|--------|---------|
+| **Input** | Context window (e.g., 128 days of history) |
+| **Task** | Predict next H days (horizon, e.g., 32 days) |
+| **Learning** | Multi-step trajectory forecasting |
+| **Output** | `checkpoints/sft_btc.pt` |
+
+```bash
+./scripts/mqc stage3 \
+  --in checkpoints/midtrain_btc.pt \
+  --out checkpoints/sft_btc.pt \
+  --csv data/BTC-USD_2014-09-17_2025-12-31_1d.csv \
+  --epochs 10 --context-len 128 --horizon 32
+```
+
+**Key difference from Midtrain:**
+
+| Midtrain (Stage 2) | SFT (Stage 3) |
+|--------------------|---------------|
+| Predict next **1** token | Predict next **H** tokens |
+| Teacher forcing only | Autoregressive generation |
+| Single-step objective | Trajectory-level objective |
+
+**Analogy to LLMs:**
+- Stage 2 is like training on individual word predictions
+- Stage 3 is like training on full conversation responses
+
+---
+
+### Stage 4: RL — Reward-Based Fine-Tuning
+
+> **Goal**: Optimize the model using reinforcement learning to maximize prediction quality.
+
+| Aspect | Details |
+|--------|---------|
+| **Algorithm** | REINFORCE (policy gradient) |
+| **Reward Options** | `token_acc` (accuracy) or `return_mse` (price similarity) |
+| **Learning** | Optimize for actual prediction quality, not just likelihood |
+| **Output** | `checkpoints/rl_btc.pt` |
+
+```bash
+./scripts/mqc stage4 \
+  --in checkpoints/sft_btc.pt \
+  --out checkpoints/rl_btc.pt \
+  --csv data/BTC-USD_2014-09-17_2025-12-31_1d.csv \
+  --steps 200 --batch-episodes 8 \
+  --reward token_acc
+```
+
+**Reward functions:**
+
+| Reward | Formula | Best For |
+|--------|---------|----------|
+| `token_acc` | % of tokens matching ground truth | Discrete accuracy |
+| `return_mse` | `-MSE(decoded_returns, actual_returns)` | Financial accuracy |
+
+**Why RL helps:**
+- Cross-entropy loss optimizes token likelihood, not trading performance
+- RL directly optimizes what we care about (prediction accuracy)
+- Can incorporate custom reward signals (e.g., Sharpe ratio)
+
+---
+
+### 🚀 Quick Start: Full Pipeline
+
+Run all four stages in sequence:
+
+```bash
+# Stage 1: Pretrain on all assets (5 epochs)
+./scripts/mqc stage1 --epochs 5
+
+# Stage 2: Specialize on BTC (3 epochs)
+./scripts/mqc stage2 --epochs 3
+
+# Stage 3: Multi-day prediction training (10 epochs)
+./scripts/mqc stage3 --epochs 10
+
+# Stage 4: RL fine-tuning (200 steps)
+./scripts/mqc stage4 --steps 200
+
+# Generate predictions
+./scripts/mqc generate --checkpoint checkpoints/rl_btc.pt
+```
+
+---
+
+### 📊 Stage Comparison Summary
+
+| Stage | Objective | Data | LR | Epochs/Steps |
+|-------|-----------|------|-----|--------------|
+| **1. Pretrain** | Cross-entropy (next token) | All assets | `5e-4` | 5-10 epochs |
+| **2. Midtrain** | Cross-entropy (single asset) | BTC only | `1e-5` | 3-5 epochs |
+| **3. SFT** | Cross-entropy (trajectory) | BTC only | `5e-6` | 10-20 epochs |
+| **4. RL** | REINFORCE (reward) | BTC only | `1e-6` | 100-500 steps |
+
+---
+
+### 🔧 Tokenizer
+
+The tokenizer converts OHLC candles into discrete tokens:
+
+| Feature | Description |
+|---------|-------------|
+| **Architecture** | VQ-VAE with EMA codebook updates |
+| **Input** | 5 features per candle: `log_return`, `body`, `upper_wick`, `lower_wick`, `range` |
+| **Output** | Single token ID (0-511) per candle |
+| **Codebook Size** | 512 tokens |
+
+Each day of price data → 1 token. Simple and interpretable.
+
+---
+
+> 📚 **Detailed Documentation**: See [docs/FOUR_STAGE_TRAINING.md](docs/FOUR_STAGE_TRAINING.md) for advanced usage.
+
+---
+
 ## Project Structure
-
-Detailed documentation of the nanochat-style refactor: see `docs/NANOCHAT_STYLE_REFACTOR.md`.
-
-Optional Stage-3 REINFORCE fine-tuning on BTC: see `docs/RL_FINETUNING_BTC.md`.
-
-Three-stage training overview (Stage 1/2/3): see `docs/THREE_STAGE_TRAINING.md`.
 
 ```
 micro_quant_chat/
