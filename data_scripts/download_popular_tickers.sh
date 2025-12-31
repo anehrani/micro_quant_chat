@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# Download 4-hour OHLC data for 10 popular tickers
+# Download OHLC data for popular tickers
 # This script uses the download_yahoo_data.py script to fetch historic market data
 
 # Change to the script directory
 cd "$(dirname "$0")"
 
 echo "=========================================="
-echo "Downloading Hourly (1H) OHLC data for popular tickers"
+echo "Downloading OHLC data for popular tickers"
 echo "=========================================="
 echo ""
 
-# List of 10 famous tickers
+# Popular tickers (mix of mega caps, ETFs, crypto)
 # AAPL - Apple Inc.
 # MSFT - Microsoft Corporation
 # GOOGL - Alphabet Inc. (Google)
@@ -34,11 +34,21 @@ TICKERS=(
     "JPM"
     "V"
     "BTC-USD"
+    "SPY"
+    "QQQ"
+    "IWM"
+    "DIA"
+    "TLT"
+    "GLD"
+    "BRK-B"
+    "MA"
+    "ETH-USD"
+    "SOL-USD"
 )
 
-# Download data for all tickers with hourly interval
-# Yahoo Finance limits intraday data to ~730 days, so we use 2 years
-python3 download_yahoo_data.py "${TICKERS[@]}" --interval 1h --start $(date -v-730d +%Y-%m-%d)
+# Use the project's venv runner so dependencies are consistent.
+# With --max, the downloader will fetch period=max for daily+.
+python download_yahoo_data.py "${TICKERS[@]}" --interval 1d --max
 
 echo ""
 echo "=========================================="

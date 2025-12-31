@@ -32,7 +32,11 @@ fi
 
 echo ""
 echo "Step 1: Installing dependencies..."
-python -m pip install -q torch numpy pandas
+if ! command -v uv >/dev/null 2>&1; then
+    echo "Error: 'uv' is not installed. Install it first: https://docs.astral.sh/uv/"
+    exit 1
+fi
+uv pip install --python .venv/bin/python -q torch numpy pandas yfinance
 echo "✓ Dependencies installed"
 echo ""
 

@@ -18,24 +18,43 @@ from src.gpt_model import GPT, GPTConfig
 class TokenizedDataset(Dataset):
     """Load tokenized price series data"""
 
-    def __init__(self, tokens_file: str, seq_len: int = 512):
+    def __init__(
+        self,
+        tokens_file: str | None = None,
+        seq_len: int = 512,
+        stride: int | None = None,
+        tokens: list[int] | None = None,
+    ):
         """
         Args:
             tokens_file: Path to file with space-separated token IDs
             seq_len: Sequence length for training
+            stride: Step size between sequence starts (defaults to seq_len//2)
+            tokens: Optional in-memory tokens (overrides tokens_file)
         """
         self.seq_len = seq_len
 
-        # Load tokens
-        with open(tokens_file, "r") as f:
-            token_str = f.read().strip()
-            self.tokens = list(map(int, token_str.split()))
+        if stride is None:
+            stride = max(1, seq_len // 2)
+        self.stride = stride
 
-        print(f"Loaded {len(self.tokens)} tokens from {tokens_file}")
+        # Load tokens
+        if tokens is not None:
+            self.tokens = tokens
+            src = "<in-memory>"
+        else:
+            if tokens_file is None:
+                raise ValueError("Either tokens_file or tokens must be provided")
+            with open(tokens_file, "r") as f:
+                token_str = f.read().strip()
+                self.tokens = list(map(int, token_str.split()))
+            src = tokens_file
+
+        print(f"Loaded {len(self.tokens)} tokens from {src}")
 
         # Create sequences
         self.data = []
-        for i in range(0, len(self.tokens) - seq_len, seq_len // 2):  # Stride by half for more samples
+        for i in range(0, len(self.tokens) - seq_len - 1, self.stride):
             self.data.append(i)
 
         print(f"Created {len(self.data)} sequences of length {seq_len}")
@@ -56,14 +75,26 @@ def create_dataloaders(
     data_file: str, seq_len: int = 512, batch_size: int = 32, num_workers: int = 0
 ) -> Tuple[DataLoader, DataLoader]:
     """Create train/val dataloaders"""
-    dataset = TokenizedDataset(data_file, seq_len)
+    # IMPORTANT: Use a contiguous time split to avoid leakage.
+    # With overlapping windows, random_split can put almost-identical sequences in train & val.
+    with open(data_file, "r") as f:
+        tokens = list(map(int, f.read().strip().split()))
 
-    # Split into train/val (80/20)
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+    split_idx = int(0.8 * len(tokens))
+    train_tokens = tokens[:split_idx]
+    val_tokens = tokens[split_idx:]
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    # Train uses overlap (more samples); Val uses non-overlapping windows for cleaner estimates.
+    train_dataset = TokenizedDataset(tokens_file=None, tokens=train_tokens, seq_len=seq_len, stride=max(1, seq_len // 2))
+    val_dataset = TokenizedDataset(tokens_file=None, tokens=val_tokens, seq_len=seq_len, stride=seq_len)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        drop_last=True,
+    )
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
     return train_loader, val_loader
@@ -134,10 +165,11 @@ def train(
         device: Device to use ('cuda', 'cpu', or 'auto')
     """
     # Auto-detect device
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
-    device = torch.device(device)
+    device_str = device
+    if device_str == "auto":
+        device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device_str}")
+    dev = torch.device(device_str)
 
     # Create checkpoint directory
     os.makedirs(save_dir, exist_ok=True)
@@ -156,7 +188,7 @@ def train(
 
     model = GPT(config)
     model.init_weights()
-    model = model.to(device)
+    model = model.to(dev)
 
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
@@ -184,10 +216,10 @@ def train(
         epoch_start = time.time()
 
         # Train
-        train_loss = train_epoch(model, train_loader, optimizer, device)
+        train_loss = train_epoch(model, train_loader, optimizer, dev)
 
         # Evaluate
-        val_loss = evaluate(model, val_loader, device)
+        val_loss = evaluate(model, val_loader, dev)
 
         # Learning rate step
         scheduler.step()

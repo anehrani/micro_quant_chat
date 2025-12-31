@@ -11,6 +11,7 @@ import pandas as pd
 import numpy as np
 import torch
 from pathlib import Path
+import json
 
 from src.gpt_model import GPT, GPTConfig
 from src.tokenizer import VQVAETwitterizerOC, consecutive_log_returns
@@ -51,6 +52,50 @@ def load_tokenizer(model_path: str, device: str = "cpu"):
     return tokenizer
 
 
+def _load_tokenizer_stats(stats_path: str) -> dict | None:
+    p = Path(stats_path)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
+def _compute_training_log_return_stats_from_repo_data(data_dir: str = "data") -> dict | None:
+    """Best-effort fallback: recompute mean/std from the repo's CSVs.
+
+    This is only used if tokenizer_stats.json is missing.
+    """
+    p = Path(data_dir)
+    if not p.exists():
+        return None
+
+    csv_files = sorted(p.glob("*.csv"))
+    if not csv_files:
+        return None
+
+    all_r = []
+    for csv_file in csv_files:
+        try:
+            df = pd.read_csv(csv_file)
+            r = consecutive_log_returns(df, c="Close")
+            if r.size:
+                all_r.append(r.astype(np.float64))
+        except Exception:
+            continue
+
+    if not all_r:
+        return None
+
+    r = np.concatenate(all_r)
+    r = r[np.isfinite(r)]
+    if r.size < 10:
+        return None
+
+    return {"mean": float(r.mean()), "std": float(r.std() + 1e-8)}
+
+
 def csv_to_tokens(csv_path: str, tokenizer, device: str = "cpu", context_length: int = 100):
     """
     Read CSV and convert to tokens using the tokenizer.
@@ -85,6 +130,15 @@ def csv_to_tokens(csv_path: str, tokenizer, device: str = "cpu", context_length:
     log_returns = consecutive_log_returns(
         pd.DataFrame({'Close': close_prices})
     )
+
+    # IMPORTANT: Tokenizer was trained on normalized log returns.
+    # Use saved stats when available; otherwise fall back to recomputing from repo data.
+    stats = _load_tokenizer_stats("checkpoints/tokenizer_stats.json")
+    if stats is None:
+        stats = _compute_training_log_return_stats_from_repo_data("data")
+
+    if stats is not None and "mean" in stats and "std" in stats:
+        log_returns = (log_returns - float(stats["mean"])) / float(stats["std"])  # type: ignore[assignment]
     
     # Convert to tensor and encode with tokenizer
     log_returns_tensor = torch.from_numpy(log_returns).float().unsqueeze(0).unsqueeze(-1)  # (1, T, 1)
@@ -122,6 +176,53 @@ def predict_next_token(model, seed_tokens: list, temperature: float = 0.8, top_k
             break
     
     return generated[-1]
+
+
+def predict_expected_log_return(
+    model: GPT,
+    seed_tokens: list[int],
+    tokenizer: VQVAETwitterizerOC,
+    temperature: float = 0.0,
+    top_k: int | None = None,
+    device: str | torch.device = "cpu",
+) -> float:
+    """Predict E[log_return] from the model's next-token distribution.
+
+    This is usually more stable than sampling a single next token.
+    """
+    model.eval()
+    device = torch.device(device) if isinstance(device, str) else device
+
+    with torch.no_grad():
+        ids = torch.tensor([seed_tokens], dtype=torch.long, device=device)
+        logits = model(ids)[:, -1, :]  # (1, vocab)
+
+        if top_k is not None:
+            v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+            logits = logits.clone()
+            logits[logits < v[:, [-1]]] = -float("inf")
+
+        if temperature and temperature > 0:
+            logits = logits / float(temperature)
+
+        probs = torch.softmax(logits, dim=-1)[0]  # (vocab,)
+
+        # Precompute token->mean(log_return) using the tokenizer decoder/codebook
+        token_ids = torch.arange(0, model.config.vocab_size, dtype=torch.long, device=device).unsqueeze(0)
+        recon = tokenizer.decode(token_ids)  # (1, T, 1) where T ~= patch_size * vocab_size? Actually decoder upsamples.
+
+        # Decoder output length depends on token sequence length; here it's (1, patch_size * vocab, 1)
+        # We chunk into per-token patches and average each patch.
+        patch = tokenizer.patch_size
+        recon = recon[0, :, 0]
+        if recon.numel() < patch * model.config.vocab_size:
+            # Fallback: average entire recon if shape isn't as expected.
+            token_vals = recon.mean().repeat(model.config.vocab_size)
+        else:
+            token_vals = recon[: patch * model.config.vocab_size].view(model.config.vocab_size, patch).mean(dim=1)
+
+        expected = (probs * token_vals.float()).sum().item()
+        return float(expected)
 
 
 def token_to_log_return(token_id: int, tokenizer, device: str = "cpu"):
@@ -189,14 +290,17 @@ def predict_next_close(csv_path: str, checkpoint_path: str, tokenizer_path: str 
     print(f"\nUsing {len(seed_tokens)} tokens as context")
     print(f"Context tokens: {seed_tokens[:10]}..." if len(seed_tokens) > 10 else f"Context tokens: {seed_tokens}")
     
-    # Predict next token
-    print(f"\nPredicting next token (temperature={temperature}, top_k={top_k})...")
-    next_token = predict_next_token(gpt_model, seed_tokens, temperature=temperature, top_k=top_k)
-    print(f"Predicted token: {next_token}")
-    
-    # Decode token to log return
-    predicted_log_return = token_to_log_return(next_token, tokenizer, device=device)
-    print(f"Predicted log return: {predicted_log_return:.6f}")
+    # Predict expected log return (more stable than sampling)
+    print(f"\nPredicting expected next log return (temperature={temperature}, top_k={top_k})...")
+    predicted_log_return = predict_expected_log_return(
+        gpt_model,
+        seed_tokens,
+        tokenizer,
+        temperature=temperature,
+        top_k=top_k,
+        device=device,
+    )
+    print(f"Predicted log return (expected): {predicted_log_return:.6f}")
     
     # Calculate predicted close price
     # log_return ≈ log(next_close / last_close)
@@ -228,7 +332,7 @@ def main():
     parser = argparse.ArgumentParser(description="Predict next close price from CSV data")
     parser.add_argument("--csv", type=str, required=True, help="Path to CSV file with OHLC data")
     parser.add_argument("--checkpoint", type=str, default="checkpoints/best_model.pt", help="Path to model checkpoint")
-    parser.add_argument("--tokenizer", type=str, default="models/tokenizer_model.pt", help="Path to tokenizer model")
+    parser.add_argument("--tokenizer", type=str, default="checkpoints/tokenizer_model.pt", help="Path to tokenizer model")
     parser.add_argument("--context_length", type=int, default=500, help="Number of recent data points to use (500 gives ~30 tokens)")
     parser.add_argument("--temperature", type=float, default=0.8, help="Sampling temperature")
     parser.add_argument("--top_k", type=int, default=50, help="Top-k sampling")
