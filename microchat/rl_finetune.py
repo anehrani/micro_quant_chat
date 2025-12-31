@@ -15,16 +15,36 @@ from .ckpt import load_checkpoint, save_checkpoint
 from .device import resolve_device
 
 
-RewardType = Literal["token_acc", "return_mse"]
+RewardType = Literal["token_acc", "proximity", "return_mse"]
 
 
 @torch.no_grad()
 def _reward_token_accuracy(sampled: list[int], target: list[int]) -> float:
+    """Exact match accuracy: fraction of tokens that match exactly."""
     if not target:
         return 0.0
     n = min(len(sampled), len(target))
     correct = sum(1 for i in range(n) if sampled[i] == target[i])
     return float(correct) / float(n)
+
+
+@torch.no_grad()
+def _reward_proximity(sampled: list[int], target: list[int], vocab_size: int = 512) -> float:
+    """Proximity-based reward: closer token IDs = higher score.
+    
+    Score per token: 1 - |pred - gt| / vocab_size
+    This rewards predictions that are "close" to ground truth even if not exact.
+    """
+    if not target:
+        return 0.0
+    n = min(len(sampled), len(target))
+    total_score = 0.0
+    for i in range(n):
+        distance = abs(sampled[i] - target[i])
+        # Normalize by vocab_size so score is in [0, 1]
+        token_score = 1.0 - (distance / vocab_size)
+        total_score += token_score
+    return total_score / float(n)
 
 
 @torch.no_grad()
@@ -72,6 +92,41 @@ def _top_k_filter(logits: torch.Tensor, top_k: int | None) -> torch.Tensor:
     return out
 
 
+def _greedy_multiday_predict(
+    *,
+    model,
+    context: list[int],
+    horizon: int,
+    device: torch.device,
+) -> tuple[list[int], torch.Tensor]:
+    """Greedy multi-day prediction.
+    
+    Predicts `horizon` future tokens using greedy (argmax) selection.
+    Returns the predicted tokens and the sum of log-probabilities for REINFORCE.
+    """
+    ids = torch.tensor([context], dtype=torch.long, device=device)
+    predicted: list[int] = []
+    sum_logprob = torch.zeros((), device=device, requires_grad=True)
+
+    for _ in range(horizon):
+        logits = model(ids)[:, -1, :]  # (1, vocab_size)
+        
+        # Greedy selection
+        next_tok = torch.argmax(logits, dim=-1)  # (1,)
+        
+        # Compute log-prob for the selected token (for policy gradient)
+        log_probs = F.log_softmax(logits, dim=-1)
+        logp = log_probs.gather(1, next_tok[:, None]).squeeze(1)  # (1,)
+        
+        sum_logprob = sum_logprob + logp.mean()
+        
+        tok_int = int(next_tok.item())
+        predicted.append(tok_int)
+        ids = torch.cat([ids, next_tok[:, None]], dim=1)
+
+    return predicted, sum_logprob
+
+
 def _sample_one_episode(
     *,
     model,
@@ -82,7 +137,11 @@ def _sample_one_episode(
     top_k: int | None,
     device: torch.device,
 ) -> tuple[list[int], torch.Tensor, torch.Tensor]:
-    """Sample an action sequence + compute sum logprob and sum entropy."""
+    """Sample an action sequence + compute sum logprob and sum entropy.
+    
+    Legacy function for stochastic sampling. For greedy multi-day prediction,
+    use _greedy_multiday_predict instead.
+    """
 
     ids = torch.tensor([context], dtype=torch.long, device=device)
     sampled: list[int] = []
@@ -125,12 +184,19 @@ def reinforce_finetune_btc(
     context_len: int = 128,
     horizon: int = 32,
     learning_rate: float = 1e-5,
-    temperature: float = 1.0,
-    top_k: int | None = 50,
-    entropy_coef: float = 0.0,
-    reward_type: RewardType = "token_acc",
+    reward_type: RewardType = "proximity",
     device: str = "auto",
 ) -> None:
+    """REINFORCE fine-tuning with greedy multi-day prediction.
+    
+    The model predicts `horizon` future days using greedy selection,
+    then receives a reward based on how close predictions are to ground truth.
+    
+    Reward types:
+    - proximity: Score = 1 - |pred - gt| / vocab_size (closer = higher)
+    - token_acc: Exact match accuracy
+    - return_mse: Decoded return sequence similarity
+    """
     dev = resolve_device(device)
 
     # Load policy model
@@ -147,11 +213,15 @@ def reinforce_finetune_btc(
 
     opt = torch.optim.AdamW(model.parameters(), lr=learning_rate, betas=(0.9, 0.95), weight_decay=0.01)
 
-    print("REINFORCE fine-tune")
+    # Get vocab size for proximity reward
+    vocab_size = cfg.vocab_size if hasattr(cfg, 'vocab_size') else 512
+    
+    print("REINFORCE fine-tune (Greedy Multi-Day Prediction)")
     print(f"  reward_type: {reward_type}")
+    print(f"  vocab_size:  {vocab_size}")
     print(f"  btc_tokens:  {len(tokens)}")
     print(f"  context_len: {context_len}")
-    print(f"  horizon:     {horizon}")
+    print(f"  horizon:     {horizon} days to predict")
     print(f"  steps:       {steps}")
     print(f"  batch_eps:   {batch_episodes}")
     print(f"  lr:          {learning_rate}")
@@ -159,43 +229,40 @@ def reinforce_finetune_btc(
     for step in range(1, steps + 1):
         episode_rewards: list[float] = []
         episode_logps: list[torch.Tensor] = []
-        episode_ents: list[torch.Tensor] = []
 
         for _ in range(batch_episodes):
             start = random.randint(0, len(tokens) - (context_len + horizon) - 1)
             context = tokens[start : start + context_len]
             target = tokens[start + context_len : start + context_len + horizon]
 
-            sampled, sum_logp, sum_ent = _sample_one_episode(
+            # Greedy multi-day prediction
+            predicted, sum_logp = _greedy_multiday_predict(
                 model=model,
                 context=context,
-                target=target,
                 horizon=horizon,
-                temperature=temperature,
-                top_k=top_k,
                 device=dev,
             )
 
+            # Compute reward based on proximity to ground truth
             if reward_type == "token_acc":
-                r = _reward_token_accuracy(sampled, target)
+                r = _reward_token_accuracy(predicted, target)
+            elif reward_type == "proximity":
+                r = _reward_proximity(predicted, target, vocab_size=vocab_size)
             else:
-                r = _reward_return_mse(sampled=sampled, target=target, tokenizer=tok, device=dev)
+                r = _reward_return_mse(sampled=predicted, target=target, tokenizer=tok, device=dev)
 
             episode_rewards.append(float(r))
             episode_logps.append(sum_logp)
-            episode_ents.append(sum_ent)
 
         rewards = torch.tensor(episode_rewards, dtype=torch.float32, device=dev)
         baseline = rewards.mean()
         advantage = (rewards - baseline).detach()
 
         logps = torch.stack(episode_logps, dim=0)
-        ents = torch.stack(episode_ents, dim=0)
 
         # Loss: maximize reward => minimize negative advantage * logprob
         loss_pg = -(advantage * logps).mean()
-        loss_ent = -(entropy_coef * ents.mean()) if entropy_coef != 0.0 else torch.zeros((), device=dev)
-        loss = loss_pg + loss_ent
+        loss = loss_pg
 
         opt.zero_grad()
         loss.backward()
@@ -224,8 +291,8 @@ def reinforce_finetune_btc(
 def main() -> None:
     import argparse
 
-    p = argparse.ArgumentParser(description="Stage 3: REINFORCE fine-tuning on BTC ground truth")
-    p.add_argument("--in", dest="checkpoint_in", default="checkpoints/best_model.pt", help="Input checkpoint")
+    p = argparse.ArgumentParser(description="Stage 4: REINFORCE fine-tuning on target asset")
+    p.add_argument("--in", dest="checkpoint_in", default="checkpoints/sft_btc.pt", help="Input checkpoint")
     p.add_argument("--out", dest="checkpoint_out", default="checkpoints/rl_btc.pt", help="Output checkpoint")
     p.add_argument(
         "--csv",
@@ -239,12 +306,10 @@ def main() -> None:
     p.add_argument("--steps", type=int, default=200)
     p.add_argument("--batch-episodes", type=int, default=8)
     p.add_argument("--context-len", type=int, default=128)
-    p.add_argument("--horizon", type=int, default=32)
+    p.add_argument("--horizon", type=int, default=32, help="Number of future days to predict")
     p.add_argument("--lr", type=float, default=1e-5)
-    p.add_argument("--temp", type=float, default=1.0)
-    p.add_argument("--top-k", type=int, default=50)
-    p.add_argument("--entropy-coef", type=float, default=0.0)
-    p.add_argument("--reward", choices=["token_acc", "return_mse"], default="token_acc")
+    p.add_argument("--reward", choices=["token_acc", "proximity", "return_mse"], default="proximity",
+                   help="Reward type: token_acc (exact match), proximity (closer=better), return_mse")
 
     args = p.parse_args()
 
@@ -257,9 +322,6 @@ def main() -> None:
         context_len=args.context_len,
         horizon=args.horizon,
         learning_rate=args.lr,
-        temperature=args.temp,
-        top_k=args.top_k,
-        entropy_coef=args.entropy_coef,
         reward_type=args.reward,
         device=args.device,
     )

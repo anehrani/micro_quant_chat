@@ -13,13 +13,13 @@ import torch.nn.functional as F
 
 @dataclass
 class GPTConfig:
-    sequence_len: int = 512
-    vocab_size: int = 128
-    n_layer: int = 8
-    n_head: int = 8
-    n_kv_head: int = 8
-    n_embd: int = 512
-    dropout: float = 0.1
+    sequence_len: int = 256
+    vocab_size: int = 512
+    n_layer: int = 4
+    n_head: int = 4
+    n_kv_head: int = 4
+    n_embd: int = 256
+    dropout: float = 0.2
 
 
 def rms_norm(x: torch.Tensor) -> torch.Tensor:

@@ -2,20 +2,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Union
 
 import numpy as np
 import pandas as pd
 import torch
 
-# Reuse the repo's existing tokenizer implementation.
-from src.tokenizer import VQVAETwitterizerOC, consecutive_log_returns
+# Import both tokenizer types
+from src.tokenizer import (
+    VQVAETwitterizerOC, 
+    OHLCCandleTokenizer,
+    consecutive_log_returns,
+    extract_ohlc_features,
+)
 
 
 @dataclass(frozen=True)
 class TokenizeResult:
     tokens: list[int]
     log_returns: np.ndarray
+
+
+# Type alias for both tokenizer types
+TokenizerType = Union[VQVAETwitterizerOC, OHLCCandleTokenizer]
 
 
 def _read_repo_csv_with_two_header_rows(csv_path: str | Path) -> pd.DataFrame:
@@ -74,16 +83,45 @@ def load_tokenizer(
     *,
     model_path: str | Path = "models/tokenizer_model.pt",
     device: str = "cpu",
-) -> VQVAETwitterizerOC:
-    # Infer tokenizer hyperparameters from the saved state dict.
+) -> TokenizerType:
+    """Load tokenizer model - supports both legacy and new OHLC tokenizer."""
     sd = torch.load(model_path, map_location="cpu", weights_only=False)
+    
+    # Check if it's the new format with config
+    if isinstance(sd, dict) and "config" in sd:
+        config = sd["config"]
+        state_dict = sd["state_dict"]
+        
+        if config.get("type") == "ohlc_candle":
+            # New OHLC Candle Tokenizer
+            tok = OHLCCandleTokenizer(
+                input_dim=config.get("input_dim", 5),
+                hidden_dim=config.get("hidden_dim", 64),
+                emb_dim=config.get("emb_dim", 32),
+                num_codes=config.get("num_codes", 512),
+                num_layers=2,
+                use_context=True,
+                beta=0.25,
+                ema_decay=0.99,
+            )
+            tok.load_state_dict(state_dict)
+            
+            # Load normalization stats if available
+            if "normalization" in sd:
+                norm = sd["normalization"]
+                tok.set_normalization_stats(
+                    torch.from_numpy(norm["mean"].astype(np.float32)),
+                    torch.from_numpy(norm["std"].astype(np.float32))
+                )
+            
+            tok.eval()
+            return tok.to(device)
+    
+    # Legacy format - VQVAETwitterizerOC
     if isinstance(sd, dict) and "state_dict" in sd and isinstance(sd["state_dict"], dict):
         sd = sd["state_dict"]
 
-    # Required keys (from src/tokenizer.py modules)
-    # - quantizer.codebook.weight: (num_codes, emb_dim)
-    # - encoder.net.0.weight: (hidden, 1, 3)
-    # - encoder.net.2.weight: (hidden, hidden, patch_size)
+    # Infer tokenizer hyperparameters from the saved state dict.
     codebook_w = sd["quantizer.codebook.weight"]
     enc0_w = sd["encoder.net.0.weight"]
     enc2_w = sd["encoder.net.2.weight"]
@@ -110,42 +148,56 @@ def load_tokenizer(
 def asset_tokens_from_csv(
     *,
     csv_path: str | Path,
-    tokenizer: VQVAETwitterizerOC,
+    tokenizer: TokenizerType,
     device: str = "cpu",
     normalize: bool = True,
     stats_source: Literal["global"] = "global",
 ) -> TokenizeResult:
-    """Convert an asset CSV close prices -> log returns -> tokens.
+    """Convert an asset CSV to tokens.
 
-    Reward-learning uses tokens for discrete generation.
-
-    normalize:
-      If True, normalize log returns by mean/std estimated from the repo's CSVs.
-      (This is consistent with earlier usage in src/predict.py.)
+    Supports both:
+    - Legacy VQVAETwitterizerOC: uses log returns (1D)
+    - New OHLCCandleTokenizer: uses OHLC features (5D)
     """
     df = _read_repo_csv_with_two_header_rows(csv_path)
+    
+    # Check tokenizer type
+    if isinstance(tokenizer, OHLCCandleTokenizer):
+        # New OHLC tokenizer - extract 5 features per candle
+        features = extract_ohlc_features(df, "Open", "High", "Low", "Close")
+        x = torch.from_numpy(features.astype(np.float32)).unsqueeze(0).to(device)
+        
+        with torch.no_grad():
+            token_ids = tokenizer.encode(x, normalize=True)  # (1, T)
+        
+        tokens = token_ids[0].detach().cpu().tolist()
+        # Return log_returns for compatibility (use the body feature which is log(C/O))
+        log_r = features[:, 1]  # body = log(C/O)
+        return TokenizeResult(tokens=tokens, log_returns=log_r)
+    
+    else:
+        # Legacy tokenizer - use log returns
+        log_r = consecutive_log_returns(df, c="Close")
 
-    log_r = consecutive_log_returns(df, c="Close")
+        if normalize:
+            stats = None
+            if stats_source == "global":
+                stats = _compute_global_log_return_stats("data")
+            if stats is not None and "mean" in stats and "std" in stats:
+                log_r = (log_r - float(stats["mean"])) / float(stats["std"])
 
-    if normalize:
-        stats = None
-        if stats_source == "global":
-            stats = _compute_global_log_return_stats("data")
-        if stats is not None and "mean" in stats and "std" in stats:
-            log_r = (log_r - float(stats["mean"])) / float(stats["std"])  # type: ignore[assignment]
+        x = torch.from_numpy(log_r.astype(np.float32)).view(1, -1, 1).to(device)
+        with torch.no_grad():
+            token_ids = tokenizer.encode(x)  # (1, T')
 
-    x = torch.from_numpy(log_r.astype(np.float32)).view(1, -1, 1).to(device)
-    with torch.no_grad():
-        token_ids = tokenizer.encode(x)  # (1, T')
-
-    tokens = token_ids[0].detach().cpu().tolist()
-    return TokenizeResult(tokens=tokens, log_returns=log_r)
+        tokens = token_ids[0].detach().cpu().tolist()
+        return TokenizeResult(tokens=tokens, log_returns=log_r)
 
 
 def btc_tokens_from_csv(
     *,
     csv_path: str | Path,
-    tokenizer: VQVAETwitterizerOC,
+    tokenizer: TokenizerType,
     device: str = "cpu",
     normalize: bool = True,
     stats_source: Literal["global"] = "global",

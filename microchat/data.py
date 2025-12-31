@@ -69,13 +69,16 @@ def create_dataloaders(
 
     train_ds = TokenizedDataset(tokens=split.train_tokens, seq_len=seq_len, stride=max(1, seq_len // 2))
     val_ds = TokenizedDataset(tokens=split.val_tokens, seq_len=seq_len, stride=seq_len)
+    
+    # Only drop_last if we have enough samples
+    drop_last = len(train_ds) > batch_size
 
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        drop_last=True,
+        drop_last=drop_last,
     )
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
     return train_loader, val_loader

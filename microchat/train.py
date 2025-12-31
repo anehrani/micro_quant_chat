@@ -120,11 +120,11 @@ def main() -> None:
     p.add_argument("--lr", "--learning_rate", dest="lr", type=float, default=5e-4)
 
     p.add_argument("--seq-len", type=int, default=256)
-    p.add_argument("--vocab", type=int, default=128)
-    p.add_argument("--layers", type=int, default=6)
-    p.add_argument("--heads", type=int, default=8)
-    p.add_argument("--kv-heads", type=int, default=8)
-    p.add_argument("--embd", type=int, default=512)
+    p.add_argument("--vocab", type=int, default=512)
+    p.add_argument("--layers", type=int, default=4)
+    p.add_argument("--heads", type=int, default=4)
+    p.add_argument("--kv-heads", type=int, default=4)
+    p.add_argument("--embd", type=int, default=256)
 
     args = p.parse_args()
 

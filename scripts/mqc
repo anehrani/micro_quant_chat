@@ -25,8 +25,9 @@ Commands:
   examples           Run usage examples
     train             Train the model (Stage 1 pretrain)
     stage1            Stage 1 pretrain (alias of train)
-    stage2            Stage 2 supervised fine-tune (BTC)
-    stage3            Stage 3 RL fine-tune (BTC, REINFORCE)
+    stage2            Stage 2 midtrain (asset-specific training)
+    stage3            Stage 3 SFT (multi-day prediction)
+    stage4            Stage 4 RL fine-tune (REINFORCE)
   eval              Evaluate trained model
   generate          Generate price predictions
   analyze           Analyze token data
@@ -71,16 +72,22 @@ case "$1" in
         $PYTHON scripts/stage1_pretrain.py "$@"
         ;;
 
-    stage2|sft)
+    stage2|midtrain)
         shift
-        echo "Stage 2 (SFT BTC)..."
+        echo "Stage 2 (midtrain - asset-specific)..."
         $PYTHON scripts/stage2_sft.py "$@"
         ;;
 
-    stage3|rl)
+    stage3|sft)
         shift
-        echo "Stage 3 (RL BTC)..."
-        $PYTHON scripts/stage3_rl.py "$@"
+        echo "Stage 3 (SFT - multi-day prediction)..."
+        $PYTHON scripts/stage3_sft.py "$@"
+        ;;
+
+    stage4|rl)
+        shift
+        echo "Stage 4 (RL - REINFORCE)..."
+        $PYTHON scripts/stage4_rl.py "$@"
         ;;
     
     eval|evaluate)
